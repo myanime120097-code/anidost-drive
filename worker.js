@@ -1,6 +1,7 @@
 // ============================================================
 // Anime Drive API — Cloudflare Worker + KV
-// Worker: anidost-drive
+// Worker name : anidost-drive
+// KV binding  : anidost-drive
 // ============================================================
 
 const CORS = {
@@ -10,7 +11,6 @@ const CORS = {
   "Access-Control-Max-Age": "86400",
 };
 
-// KV binding নামে hyphen আছে — bracket notation দিয়ে access
 function getKV(env) {
   return env["anidost-drive"];
 }
@@ -26,7 +26,6 @@ function err(msg, status = 400) {
   return json({ error: msg }, status);
 }
 
-// শুধু anime_<number>.js allow
 function validFileName(name) {
   return /^anime_\d+\.js$/.test(name);
 }
@@ -43,24 +42,34 @@ export default {
     }
 
     // ============================================================
-    // PUBLIC ROUTES (auth ছাড়া) — script src এর জন্য
+    // PUBLIC ROUTES (auth ছাড়া)
     // ============================================================
 
-    // GET /js/:name  → JS content
+    // Health check
+    if ((path === "/" || path === "/health") && request.method === "GET") {
+      return json({
+        ok: true,
+        service: "Anime Drive API",
+        worker: "anidost-drive",
+        time: new Date().toISOString(),
+      });
+    }
+
+    // GET /js/:name → JS content (script tag এর জন্য)
     const jsMatch = path.match(/^\/js\/(.+)$/);
     if (jsMatch && request.method === "GET") {
       const name = decodeURIComponent(jsMatch[1]);
       if (!validFileName(name)) {
-        return new Response("// invalid file", {
+        return new Response("// invalid file: " + name, {
           status: 400,
-          headers: { "Content-Type": "application/javascript", ...CORS },
+          headers: { "Content-Type": "application/javascript; charset=utf-8", ...CORS },
         });
       }
       const content = await KV.get(name);
       if (content === null) {
         return new Response("// not found: " + name, {
           status: 404,
-          headers: { "Content-Type": "application/javascript", ...CORS },
+          headers: { "Content-Type": "application/javascript; charset=utf-8", ...CORS },
         });
       }
       return new Response(content, {
@@ -79,8 +88,8 @@ export default {
         .filter((k) => validFileName(k.name))
         .map((k) => ({ name: k.name }))
         .sort((a, b) => {
-          const na = parseInt(a.name.match(/_(\d+)\.js/)?.[1] || "0", 10);
-          const nb = parseInt(b.name.match(/_(\d+)\.js/)?.[1] || "0", 10);
+          const na = parseInt((a.name.match(/_(\d+)\.js/) || [])[1] || "0", 10);
+          const nb = parseInt((b.name.match(/_(\d+)\.js/) || [])[1] || "0", 10);
           return na - nb;
         });
       return json({ files });
@@ -95,7 +104,7 @@ export default {
     }
 
     try {
-      // ---------- GET /list ----------
+      // GET /list → সব file names
       if (path === "/list" && request.method === "GET") {
         const list = await KV.list({ prefix: "anime_" });
         const files = list.keys
@@ -104,7 +113,7 @@ export default {
         return json({ files });
       }
 
-      // ---------- /file/:name ----------
+      // /file/:name
       const fileMatch = path.match(/^\/file\/(.+)$/);
       if (fileMatch) {
         const name = decodeURIComponent(fileMatch[1]);
@@ -140,16 +149,6 @@ export default {
           await KV.delete(name);
           return json({ ok: true, deleted: name });
         }
-      }
-
-      // ---------- Health ----------
-      if (path === "/" || path === "/health") {
-        return json({
-          ok: true,
-          service: "Anime Drive API",
-          worker: "anidost-drive",
-          time: new Date().toISOString(),
-        });
       }
 
       return err("Not found", 404);
